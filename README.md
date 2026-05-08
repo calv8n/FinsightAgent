@@ -30,5 +30,12 @@ How to contribute, coding standards, and development workflow.
 ## Troubleshooting
 Common issues and how to resolve them.
 
+### Import "dotenv" could not be resolved
+This error means the `dotenv` package is not installed.  
+**Solution:** Run the following command in your project directory:
+```bash
+npm install dotenv
+```
+
 ## License
 Project license and any attribution notes.
