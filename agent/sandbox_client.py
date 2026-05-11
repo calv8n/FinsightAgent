@@ -234,7 +234,7 @@ def build_sandbox_image(image: str = DOCKER_IMAGE) -> bool:
     sandbox_dir = os.path.abspath(sandbox_dir)
 
     if not os.path.isfile(os.path.join(sandbox_dir, "Dockerfile")):
-        print(f"❌ Dockerfile not found in {sandbox_dir}")
+        print(f"Dockerfile not found in {sandbox_dir}")
         return False
 
     print(f"Building {image!r} from {sandbox_dir} ...")
@@ -244,7 +244,7 @@ def build_sandbox_image(image: str = DOCKER_IMAGE) -> bool:
         capture_output=False,
     )
     if result.returncode == 0:
-        print(f"✅ Image built: {image}")
+        print(f"Image built: {image}")
         return True
     else:
         print(f"❌ Build failed (exit {result.returncode})")

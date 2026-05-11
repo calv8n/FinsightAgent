@@ -21,7 +21,7 @@
 #
 # The caller pipes JSON to stdin, reads JSON from stdout.
 
-FROM python:3.12-slim
+FROM python:3.13-slim
 
 # Non-root user — no sudo, no privilege escalation
 RUN useradd --no-create-home --shell /bin/false --uid 10001 sandbox

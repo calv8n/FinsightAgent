@@ -44,6 +44,7 @@ One or two sentences: what you need to do and why.
 </THOUGHT>
 <CODE>
 # Python code here. print() to show results.
+# don't explicitly import numpy/pandas — they're already available as np and pd.
 </CODE>
 
 STRUCTURE B — when you have the final answer:
@@ -60,7 +61,7 @@ Clear, complete answer to the user's question.
 - Available: numpy (np), pandas (pd), plus all standard Python builtins
 - Variables you assign persist across iterations (passed via state dict)
 - print() output is captured and shown to you in [Code Execution Result]
-
+- import numpy as np and import pandas as pd are available if you need them, you do not have to explicitly import them in your code blocks.
 ## Rules
 
 - Write code first, reason from its output — do not guess
