@@ -1,5 +1,6 @@
 import json
 import os
+import time
 import requests
 import logging
 from dotenv import load_dotenv
@@ -16,49 +17,85 @@ MODEL = os.getenv("MODEL", "llama-3.3-70b-versatile")
 def llm_request(
     system_prompt: str,
     messages: list[dict],
-    temperature: float = 0.7,
+    model: str = MODEL,
+    temperature: float = 0.6,
+    max_tokens: int = 2048,
+    retries: int = 3,
+    retry_delay: float = 2.0,
 ) -> Optional[str]:
     """
-    Raw HTTP POST to Groq API.
+    POST to Groq /v1/chat/completions.
 
     Args:
-        system_prompt: System instruction
-        messages: Message history as {"role": "user"|"assistant", "content": "..."} dicts
-        temperature: Sampling temperature (0.0-2.0)
+        system_prompt: Injected as {"role": "system"} at index 0.
+        messages:      Windowed history dicts from ConversationHistory.as_dicts().
+        retries:       Number of retry attempts on transient errors.
 
     Returns:
-        Assistant response text, or None if error
+        Assistant response text, or None on unrecoverable error.
     """
-    if not GROQ_API_KEY:
-        raise ValueError(
-            "GROQ_API_KEY not set. Export it: export GROQ_API_KEY=your-key"
-        )
+    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    if not api_key:
+        raise EnvironmentError("API_KEY is not set")
 
     headers = {
-        "Authorization": f"Bearer {GROQ_API_KEY}",
+        "Authorization": f"Bearer {api_key}",
         "Content-Type": "application/json",
     }
 
     payload = {
-        "model": MODEL,
-        "messages": [
-            {"role": "system", "content": system_prompt},
-            *messages,
-        ],
+        "model": model,
+        "messages": [{"role": "system", "content": system_prompt}, *messages],
         "temperature": temperature,
-        "max_tokens": 2048,
+        "max_tokens": max_tokens,
     }
 
-    try:
-        response = requests.post(
-            GROQ_API_URL, json=payload, headers=headers, timeout=30
-        )
-        response.raise_for_status()
-        data = response.json()
-        return data["choices"][0]["message"]["content"]
-    except requests.exceptions.RequestException as e:
-        print(f"API Error: {e}")
-        return None
-    except (KeyError, json.JSONDecodeError) as e:
-        print(f"Response Parse Error: {e}")
-        return None
+    last_error: Optional[Exception] = None
+
+    for attempt in range(1, retries + 1):
+        try:
+            resp = requests.post(
+                GROQ_API_URL,
+                headers=headers,
+                json=payload,
+                timeout=30,
+            )
+            resp.raise_for_status()
+            data = resp.json()
+            return data["choices"][0]["message"]["content"]
+
+        except requests.exceptions.HTTPError as exc:
+            status = exc.response.status_code if exc.response is not None else "?"
+            # 429 = rate limit, 5xx = server error → retry
+            if status in (429, 500, 502, 503, 504) and attempt < retries:
+                wait = retry_delay * attempt
+                print(
+                    f"  [groq] HTTP {status}, retrying in {wait:.1f}s (attempt {attempt}/{retries})"
+                )
+                time.sleep(wait)
+                last_error = exc
+                continue
+            print(f"  [groq] HTTP error {status}: {exc}")
+            return None
+
+        except (
+            requests.exceptions.ConnectionError,
+            requests.exceptions.Timeout,
+        ) as exc:
+            if attempt < retries:
+                wait = retry_delay * attempt
+                print(
+                    f"  [groq] Network error, retrying in {wait:.1f}s (attempt {attempt}/{retries})"
+                )
+                time.sleep(wait)
+                last_error = exc
+                continue
+            print(f"  [groq] Network error after {retries} attempts: {exc}")
+            return None
+
+        except (KeyError, json.JSONDecodeError) as exc:
+            print(f"  [groq] Malformed response: {exc}")
+            return None
+
+    print(f"  [groq] All {retries} attempts failed. Last error: {last_error}")
+    return None

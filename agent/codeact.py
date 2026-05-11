@@ -17,7 +17,7 @@ def run_codeact_agent(
     Run complete CodeAct agent loop with exec, observation feedback, and iteration cap.
 
     Loop Flow:
-    1. Agent calls Groq API, responds with <THOUGHT> + <CODE>
+    1. Agent calls LLM API, responds with <THOUGHT> + <CODE>
     2. We extract code, execute in sandbox, capture output
     3. We feed observation (code output) back to agent
     4. Agent either writes more code or provides <FINAL_ANSWER>
