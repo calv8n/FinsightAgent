@@ -2,5 +2,10 @@ groq==1.2.0
 fastapi==0.136.1
 requests==2.33.1
 python-dotenv==1.2.2
-numpy==2.4.4
 pandas==3.0.2
+sec-edgar-downloader>=5.0.2
+beautifulsoup4>=4.12
+lxml>=5.0
+sentence-transformers>=3.0.0
+numpy>=1.26.0
+streamlit==1.58.0
