@@ -1,18 +1,5 @@
 """
-rag/__init__.py — RAG pipeline entry point.
-
-Quick start
------------
-    from rag import RAGPipeline
-
-    rag = RAGPipeline()
-    rag.ingest("AAPL", years=[2022, 2023, 2024])
-    rag.ingest("MSFT", years=[2022, 2023, 2024])
-
-    results = rag.retrieve("Apple R&D spend as % of revenue")
-    for r in results:
-        print(r["ticker"], r["year"], r["section"], r["score"])
-        print(r["text"][:300])
+rag/__init__.py — RAG pipeline with Qdrant + cross-encoder reranker.
 """
 
 from __future__ import annotations
@@ -21,28 +8,27 @@ from typing import Optional
 from rag.ingest import fetch_10k
 from rag.embedder import Embedder
 from rag.store import RAGStore
+from rag.reranker import Reranker
 
 
 class RAGPipeline:
-    """
-    Thin orchestrator that wires ingest → embed → store → retrieve.
-    One instance per process; call ingest() for each ticker you need.
-    """
-
-    def __init__(self, data_dir: Optional[str] = None):
+    def __init__(self, data_dir: Optional[str] = None, rerank: bool = True):
         self.embedder = Embedder()
         self.store = RAGStore()
+        self.reranker = Reranker() if rerank else None
         self.data_dir = data_dir
 
     def ingest(self, ticker: str, years: list[int]) -> int:
-        """
-        Download, chunk, embed, and index 10-K filings.
-        Returns number of chunks added.
-        """
-        print(f"\n[RAG] Ingesting {ticker} {years} ...")
-        chunks = fetch_10k(ticker, years=years, data_dir=self.data_dir)
+        ticker = ticker.upper()
+        to_fetch = [y for y in years if not self.store.has_filing(ticker, y)]
+        if not to_fetch:
+            print(f"[RAG] {ticker} {years} already in Qdrant — skipping.")
+            return 0
+
+        print(f"\n[RAG] Ingesting {ticker} {to_fetch} ...")
+        chunks = fetch_10k(ticker, years=to_fetch, data_dir=self.data_dir)
         if not chunks:
-            print(f"[RAG] No chunks produced for {ticker}.")
+            print(f"[RAG] No chunks for {ticker}.")
             return 0
 
         chunks = self.embedder.embed_chunks(chunks)
@@ -50,11 +36,15 @@ class RAGPipeline:
         return len(chunks)
 
     def retrieve(self, query: str, top_k: int = 5) -> list[dict]:
-        """
-        Hybrid dense + BM25 retrieval with RRF fusion.
-        Returns top_k chunk dicts with a "score" key added.
-        """
-        return self.store.retrieve(query, self.embedder, top_k=top_k)
+        # Retrieve 2× candidates, rerank down to top_k
+        candidates = self.store.retrieve(
+            query,
+            self.embedder,
+            top_k=top_k * 2 if self.reranker else top_k,
+        )
+        if self.reranker and candidates:
+            candidates = self.reranker.rerank(query, candidates, top_k=top_k)
+        return candidates
 
     def __len__(self) -> int:
         return len(self.store)

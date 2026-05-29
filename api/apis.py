@@ -1,42 +1,43 @@
+"""
+agent/groq_client.py — Raw HTTP Groq API calls. Zero SDK dependencies.
+"""
+
 import json
 import os
 import time
-import requests
-import logging
 from dotenv import load_dotenv
 from typing import Optional
 
-load_dotenv()
-logging.basicConfig(level=logging.INFO)
+import requests
 
-GROQ_API_KEY = os.getenv("GROQ_API_KEY")
+load_dotenv()
+
 GROQ_API_URL = "https://api.groq.com/openai/v1/chat/completions"
-MODEL = os.getenv("MODEL", "llama-3.3-70b-versatile")
+DEFAULT_MODEL = os.getenv("MODEL")
 
 
 def llm_request(
     system_prompt: str,
     messages: list[dict],
-    model: str = MODEL,
+    model: str = DEFAULT_MODEL,
     temperature: float = 0.6,
     max_tokens: int = 2048,
-    retries: int = 3,
-    retry_delay: float = 2.0,
+    retries: int = 5,
+    retry_delay: float = 8.0,  # 429s need longer waits than other errors
 ) -> Optional[str]:
     """
-    POST to Groq /v1/chat/completions.
+    POST to Groq /v1/chat/completions with exponential backoff on 429.
 
-    Args:
-        system_prompt: Injected as {"role": "system"} at index 0.
-        messages:      Windowed history dicts from ConversationHistory.as_dicts().
-        retries:       Number of retry attempts on transient errors.
-
-    Returns:
-        Assistant response text, or None on unrecoverable error.
+    On 429 the Groq response includes a 'retry-after' header (seconds).
+    We honour it when present, otherwise fall back to exponential backoff.
     """
-    api_key = os.getenv("GROQ_API_KEY", "").strip()
+    api_key = os.getenv("GROQ_API_KEY").strip()
     if not api_key:
-        raise EnvironmentError("API_KEY is not set")
+        raise EnvironmentError(
+            "GROQ_API_KEY is not set.\n"
+            "Get a free key at https://console.groq.com/keys\n"
+            "Then: export GROQ_API_KEY=gsk_..."
+        )
 
     headers = {
         "Authorization": f"Bearer {api_key}",
@@ -50,8 +51,6 @@ def llm_request(
         "max_tokens": max_tokens,
     }
 
-    last_error: Optional[Exception] = None
-
     for attempt in range(1, retries + 1):
         try:
             resp = requests.post(
@@ -61,20 +60,28 @@ def llm_request(
                 timeout=30,
             )
             resp.raise_for_status()
-            data = resp.json()
-            return data["choices"][0]["message"]["content"]
+            return resp.json()["choices"][0]["message"]["content"]
 
         except requests.exceptions.HTTPError as exc:
-            status = exc.response.status_code if exc.response is not None else "?"
-            # 429 = rate limit, 5xx = server error → retry
-            if status in (429, 500, 502, 503, 504) and attempt < retries:
-                wait = retry_delay * attempt
+            status = exc.response.status_code if exc.response is not None else 0
+
+            if status == 429 and attempt < retries:
+                # Honour Groq's retry-after header if present
+                retry_after = exc.response.headers.get("retry-after")
+                wait = float(retry_after) if retry_after else retry_delay * attempt
                 print(
-                    f"  [groq] HTTP {status}, retrying in {wait:.1f}s (attempt {attempt}/{retries})"
+                    f"  [groq] 429 rate limit — waiting {wait:.0f}s "
+                    f"(attempt {attempt}/{retries})"
                 )
                 time.sleep(wait)
-                last_error = exc
                 continue
+
+            if status in (500, 502, 503, 504) and attempt < retries:
+                wait = retry_delay * attempt
+                print(f"  [groq] HTTP {status}, retrying in {wait:.1f}s")
+                time.sleep(wait)
+                continue
+
             print(f"  [groq] HTTP error {status}: {exc}")
             return None
 
@@ -84,11 +91,8 @@ def llm_request(
         ) as exc:
             if attempt < retries:
                 wait = retry_delay * attempt
-                print(
-                    f"  [groq] Network error, retrying in {wait:.1f}s (attempt {attempt}/{retries})"
-                )
+                print(f"  [groq] Network error, retrying in {wait:.1f}s")
                 time.sleep(wait)
-                last_error = exc
                 continue
             print(f"  [groq] Network error after {retries} attempts: {exc}")
             return None
@@ -97,5 +101,5 @@ def llm_request(
             print(f"  [groq] Malformed response: {exc}")
             return None
 
-    print(f"  [groq] All {retries} attempts failed. Last error: {last_error}")
+    print(f"  [groq] All {retries} attempts exhausted.")
     return None

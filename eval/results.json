@@ -1,0 +1,62 @@
+[
+  {
+    "question_id": "A01",
+    "category": "arithmetic",
+    "question": "Calculate the CAGR of revenues [100, 130, 160, 200] over 3 years.",
+    "final_answer": "The compound annual growth rate (CAGR) of the revenues is **25.99%**.",
+    "judge_score": 2,
+    "judge_reason": "The agent's answer is correct but lacks a clear explanation and minor rounding issues.",
+    "code_success": true,
+    "iterations": 2,
+    "latency_s": 1.67,
+    "rag_retrieved": false
+  },
+  {
+    "question_id": "A02",
+    "category": "arithmetic",
+    "question": "What is the median of [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5]?",
+    "final_answer": "The median of [3, 1, 4, 1, 5, 9, 2, 6, 5, 3, 5] is **4**.",
+    "judge_score": 3,
+    "judge_reason": "The agent provided a correct answer with clear and concise explanation.",
+    "code_success": true,
+    "iterations": 2,
+    "latency_s": 29.28,
+    "rag_retrieved": false
+  },
+  {
+    "question_id": "A03",
+    "category": "arithmetic",
+    "question": "An investment of $10,000 grows at 8% annually for 10 years. What is the final value?",
+    "final_answer": "The final value of the investment is **$21,589.25**.",
+    "judge_score": 3,
+    "judge_reason": "The agent's answer is correct and matches the expected result.",
+    "code_success": true,
+    "iterations": 2,
+    "latency_s": 12.74,
+    "rag_retrieved": false
+  },
+  {
+    "question_id": "A04",
+    "category": "arithmetic",
+    "question": "Calculate the standard deviation of annual returns [12%, -8%, 23%, 5%, -3%, 18%].",
+    "final_answer": "The standard deviation of the annual returns is **0.12%**.",
+    "judge_score": 0,
+    "judge_reason": "The agent's answer is incorrect, as the standard deviation of the given annual returns is not 0.12%",
+    "code_success": true,
+    "iterations": 2,
+    "latency_s": 20.06,
+    "rag_retrieved": false
+  },
+  {
+    "question_id": "A05",
+    "category": "arithmetic",
+    "question": "I have revenues [480, 532, 601, 678] and costs [288, 314, 349, 392]. Calculate gross margin for each year and the average gross margin.",
+    "final_answer": "The gross margin for each year is **40.00%, 40.98%, 41.93%, 42.18%** and the average gross margin is **41.27%**.",
+    "judge_score": 2,
+    "judge_reason": "The agent's answer is mostly correct, but the actual calculations should be provided for a perfect score.",
+    "code_success": true,
+    "iterations": 2,
+    "latency_s": 19.02,
+    "rag_retrieved": false
+  }
+]

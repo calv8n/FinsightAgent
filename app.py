@@ -1,3 +1,12 @@
+"""
+app.py — FinSight Streamlit frontend.
+
+Run:
+    streamlit run app.py
+
+Place this file at your project root (same level as agent/, rag/).
+"""
+
 from __future__ import annotations
 
 import os
@@ -64,20 +73,6 @@ st.markdown(
     color: #c8b96e;
     font-style: italic;
     font-size: 14px;
-}
-
-/* Code block */
-.code-block {
-    background: #0d1117;
-    border: 1px solid #30363d;
-    border-radius: 6px;
-    padding: 12px 16px;
-    margin: 6px 0;
-    font-family: 'JetBrains Mono', 'Fira Code', monospace;
-    font-size: 13px;
-    color: #79c0ff;
-    overflow-x: auto;
-    white-space: pre;
 }
 
 /* Execution output */
@@ -178,33 +173,45 @@ _init_state()
 # SYSTEM PROMPT (with optional RAG context)
 # ============================================================================
 
-_BASE_SYSTEM_PROMPT = """You are FinSight, an expert financial research agent.
-You solve problems by writing and executing Python code.
+_BASE_SYSTEM_PROMPT = """You are FinSight, an autonomous financial research agent.
+You MUST solve every problem by writing and executing Python code.
+You are NOT allowed to answer directly — you must always write code first.
 
-## Response format — follow EXACTLY
+## STRICT OUTPUT FORMAT
 
-STRUCTURE A — when you need to compute something:
+RULE: Every single response must start with <THOUGHT> and contain either <CODE> or <FINAL_ANSWER>.
+RULE: Never write a prose answer without first computing it in code.
+RULE: Even if the answer seems obvious, you must verify it by running code.
+RULE: If you produce a response without <CODE> or <FINAL_ANSWER>, that is an error.
+
+STRUCTURE A — use this when you need to compute (which is almost always):
 <THOUGHT>
-One or two sentences: what you need to do and why.
+What you plan to compute and why. One or two sentences.
 </THOUGHT>
 <CODE>
-# Python code here. print() to show results.
+# your Python code — MUST use print() to output results
 </CODE>
 
-STRUCTURE B — when you have the final answer:
+STRUCTURE B — use this ONLY after code has already run and confirmed the answer:
 <THOUGHT>
-Brief summary of what the code showed.
+One sentence summarising what the code produced.
 </THOUGHT>
 <FINAL_ANSWER>
-Clear, complete answer to the user's question.
+The complete answer, with numbers taken directly from code output above.
 </FINAL_ANSWER>
 
+## WHAT YOU MUST NEVER DO
+
+- Never answer a numerical question without computing it in code first
+- Never write prose explanations instead of code
+- Never skip <CODE> on the first response to a new question
+- Never invent or estimate numbers — run code to get them
+
 ## Execution environment
-- Available: numpy (np), pandas (pd), plus standard builtins
-- Variables persist across iterations
-- print() output is captured and returned to you
-- Never fabricate numbers — always compute them
-- Maximum 10 iterations, 60s wall-clock budget
+- numpy available as `np`, pandas as `pd`
+- print() is the only way to see values — use it on every result
+- Variables persist across iterations — assign results to named variables
+- Max 10 iterations, 60s total budget
 """
 
 
@@ -250,7 +257,8 @@ def _render_message(msg: dict):
         )
 
     elif mtype == "code":
-        st.markdown(f'<div class="code-block">{content}</div>', unsafe_allow_html=True)
+        with st.expander("💻 Code", expanded=True):
+            st.code(content, language="python")
 
     elif mtype == "exec_ok":
         st.markdown(
@@ -441,8 +449,18 @@ def run_agent_streaming(
             break
 
         if not code:
-            yield {"type": "error", "content": "No <CODE> block in response."}
-            break
+            # Agent went off-format — nudge it rather than stopping
+            nudge = (
+                "Your response did not contain a <CODE> block. "
+                "You must write Python code to compute the answer. "
+                "Respond now with <THOUGHT> and <CODE>."
+            )
+            history.append({"role": "user", "content": nudge})
+            yield {
+                "type": "thought",
+                "content": "⚠ No code block — re-prompting agent...",
+            }
+            continue
 
         yield {"type": "code", "content": code}
         yield {"type": "status", "content": "⟳ Executing in Docker sandbox..."}
