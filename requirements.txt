@@ -1,11 +1,27 @@
-groq==1.2.0
-fastapi==0.136.1
-requests==2.33.1
-python-dotenv==1.2.2
-pandas==3.0.2
+# Host-side dependencies
+
+# LLM
+requests>=2.31.0
+
+# RAG — ingestion
 sec-edgar-downloader>=5.0.2
-beautifulsoup4>=4.12
-lxml>=5.0
-sentence-transformers>=3.0.0
+beautifulsoup4>=4.12.0
+lxml>=5.0.0
+
+# RAG — embeddings + reranker
+sentence-transformers==2.7.0
+torch==2.2.2
+
+# RAG — vector DB
+qdrant-client>=1.9.0
+
+# RAG — numerics
 numpy>=1.26.0
-streamlit==1.58.0
+
+# API backend
+fastapi>=0.111.0
+uvicorn[standard]>=0.29.0
+sse-starlette>=1.8.0
+
+# Frontend
+streamlit>=1.35.0

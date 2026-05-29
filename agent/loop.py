@@ -2,7 +2,7 @@
 agent/loop.py — CodeAct agent loop.
 
 Wires together:
-  llm_request.py   — LLM calls (raw Groq HTTP)
+  groq_client.py   — LLM calls (raw Groq HTTP)
   history.py       — rolling-window conversation history
   sandbox_client.py — Docker code execution
 
@@ -31,45 +31,64 @@ from .sandbox_client import ExecResult, SandboxClient
 # SYSTEM PROMPT
 # ============================================================================
 
-SYSTEM_PROMPT = """You are FinSight, an expert financial research agent.
-You solve problems by writing and executing Python code.
+SYSTEM_PROMPT = """You are FinSight, an autonomous financial research agent.
+You MUST solve every problem by writing and executing Python code.
+You are NOT allowed to answer directly — you must always write code first.
 
-## Response format — follow EXACTLY
+## STRICT OUTPUT FORMAT
 
-Every response must contain exactly one of these two structures:
+RULE: Every single response must start with <THOUGHT> and contain either <CODE> or <FINAL_ANSWER>.
+RULE: Never write a prose answer without first computing it in code.
+RULE: Even if the answer seems obvious, you must verify it by running code.
+RULE: If you produce a response without <CODE> or <FINAL_ANSWER>, that is an error.
 
-STRUCTURE A — when you need to compute something:
+STRUCTURE A — use this when you need to compute (which is almost always):
 <THOUGHT>
-One or two sentences: what you need to do and why.
+What you plan to compute and why. One or two sentences.
 </THOUGHT>
 <CODE>
-# Python code here. print() to show results.
-# don't explicitly import numpy/pandas — they're already available as np and pd.
+# your Python code — MUST use print() to output results
 </CODE>
 
-STRUCTURE B — when you have the final answer:
+STRUCTURE B — use this ONLY after code has already run and confirmed the answer:
 <THOUGHT>
-Brief summary of what the code showed.
+One sentence summarising what the code produced.
 </THOUGHT>
 <FINAL_ANSWER>
-Clear, complete answer to the user's question.
+The complete answer, with numbers taken directly from code output above.
 </FINAL_ANSWER>
+
+## WHAT YOU MUST NEVER DO
+
+- Never answer a numerical question without computing it in code first
+- Never write prose explanations instead of code
+- Never skip <CODE> on the first response to a new question
+- Never invent or estimate numbers — run code to get them
 
 ## Execution environment
 
-- Fresh Docker container each iteration — hardened, no network, read-only FS
-- Available: numpy (np), pandas (pd), plus all standard Python builtins
-- Variables you assign persist across iterations (passed via state dict)
-- print() output is captured and shown to you in [Code Execution Result]
-- import numpy as np and import pandas as pd are available if you need them, you do not have to explicitly import them in your code blocks.
-## Rules
+- numpy available as `np`, pandas as `pd`
+- print() is the only way to see values — use it on every result
+- Variables persist across iterations — assign results to named variables
+- Max 10 iterations, 60s total budget
 
-- Write code first, reason from its output — do not guess
-- Use print() liberally; it is the only way to see intermediate values
-- If code raises an error, read the traceback and fix the approach
-- Variables from previous iterations are available — reuse them
-- Maximum 10 iterations per question; 60 s wall-clock budget
-- Never fabricate numbers; always compute them
+## Example showing correct behaviour
+
+User: "What is the CAGR of revenues [100, 130, 160, 200]?"
+
+CORRECT response:
+<THOUGHT>
+I need to compute CAGR = (end/start)^(1/n) - 1 where n = number of periods.
+</THOUGHT>
+<CODE>
+revenues = [100, 130, 160, 200]
+n = len(revenues) - 1
+cagr = (revenues[-1] / revenues[0]) ** (1/n) - 1
+print(f"CAGR: {cagr:.2%}")
+</CODE>
+
+WRONG response (never do this):
+"The CAGR is approximately 26% based on the revenue growth from 100 to 200."
 
 ## Example (multi-step)
 
@@ -125,7 +144,7 @@ class AgentResult:
     final_state: dict = field(default_factory=dict)
 
     def summary(self) -> str:
-        status = "Pass" if self.success else "Fail"
+        status = "✅" if self.success else "❌"
         return (
             f"{status} {'Success' if self.success else 'Failed'} | "
             f"{self.iterations} iteration(s) | "
@@ -216,26 +235,33 @@ def run_agent(
         if final_answer:
             answer = final_answer
             if verbose:
-                print(f"\nFINAL ANSWER:\n{answer}")
+                print(f"\n✅ FINAL ANSWER:\n{answer}")
             break
 
         # ── 3. Execute code ──────────────────────────────────────────────
         if not code:
+            # Agent went off-format — nudge it back instead of stopping
             if verbose:
-                print("  [loop] No <CODE> block found — stopping.")
-            break
+                print("  [loop] No <CODE> block — nudging agent back to format.")
+            nudge = (
+                "Your response did not contain a <CODE> block. "
+                "You must write Python code to compute the answer. "
+                "Respond now with <THOUGHT> and <CODE>."
+            )
+            history.add_user(nudge)
+            continue  # give it another iteration to comply
 
         if verbose:
-            print(f"\nCODE:\n{code}")
+            print(f"\n💻 CODE:\n{code}")
 
         result: ExecResult = sandbox.run(code, state)
         state = result.state  # persist updated variables
 
         if verbose:
             if result.stdout.strip():
-                print(f"\nSTDOUT:\n{result.stdout.rstrip()}")
+                print(f"\n📤 STDOUT:\n{result.stdout.rstrip()}")
             if result.stderr.strip():
-                print(f"\nSTDERR:\n{result.stderr.rstrip()}")
+                print(f"\n⚠️  STDERR:\n{result.stderr.rstrip()}")
             print(
                 f"   ok={result.ok} | {result.elapsed*1000:.0f}ms | "
                 f"vars={list(state.keys())}"
