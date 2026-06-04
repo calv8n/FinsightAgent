@@ -154,13 +154,27 @@ class RAGStore:
         self._bm25 = _BM25([c.get("text", "") for c in chunks])
 
     def _dense(self, q_vec, k, f) -> list[tuple[str, float]]:
-        hits = self._qc.search(
-            collection_name=self._col,
-            query_vector=q_vec.tolist(),
-            limit=k,
-            query_filter=f,
-            with_payload=False,
-        )
+        try:
+            # qdrant-client >= 1.10
+            from qdrant_client.models import QueryRequest
+
+            result = self._qc.query_points(
+                collection_name=self._col,
+                query=q_vec.tolist(),
+                limit=k,
+                query_filter=f,
+                with_payload=False,
+            )
+            hits = result.points
+        except AttributeError:
+            # qdrant-client < 1.10 fallback
+            hits = self._qc.search(
+                collection_name=self._col,
+                query_vector=q_vec.tolist(),
+                limit=k,
+                query_filter=f,
+                with_payload=False,
+            )
         return [(str(h.id), h.score) for h in hits]
 
     def _sparse(self, query, k, ticker, year) -> list[tuple[str, float]]:
