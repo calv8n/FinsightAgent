@@ -20,7 +20,13 @@ from typing import Optional, Generator
 import streamlit as st
 
 # ── project root on path ─────────────────────────────────────────────────────
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+# Use __file__ so the path is correct regardless of where streamlit is launched.
+_ROOT = os.path.dirname(os.path.abspath(__file__))
+if _ROOT not in sys.path:
+    sys.path.insert(0, _ROOT)
+
+# Also change cwd to project root so relative imports (rag/, agent/) resolve.
+os.chdir(_ROOT)
 
 
 # ============================================================================
@@ -129,11 +135,29 @@ def _get_sandbox():
 
 @st.cache_resource(show_spinner="Initialising RAG pipeline...")
 def _get_rag():
+    import traceback
+
+    # --- diagnostic info always stored so sidebar can show it ---
+    diag = {
+        "cwd": os.getcwd(),
+        "_ROOT": _ROOT,
+        "sys.path": sys.path[:5],
+        "rag_init": os.path.join(_ROOT, "rag", "__init__.py"),
+    }
+    diag["rag_init_exists"] = os.path.isfile(diag["rag_init"])
+
     try:
         from rag import RAGPipeline
 
-        return RAGPipeline()
-    except ImportError:
+        pipeline = RAGPipeline()
+        st.session_state["_rag_diag"] = diag
+        st.session_state["_rag_error"] = None
+        return pipeline
+    except Exception as e:
+        diag["error"] = f"{type(e).__name__}: {e}"
+        diag["traceback"] = traceback.format_exc()
+        st.session_state["_rag_diag"] = diag
+        st.session_state["_rag_error"] = diag["error"]
         return None
 
 
@@ -143,9 +167,29 @@ def _groq_chat(system_prompt, messages):
     return llm_request(system_prompt=system_prompt, messages=messages)
 
 
+def _get_formulas(query: str) -> str:
+    try:
+        from agent.formula_tool import get_all_formulas_for_query
+
+        return get_all_formulas_for_query(query)
+    except Exception:
+        return ""
+
+
 def _extract(tag, text):
     m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL | re.IGNORECASE)
     return m.group(1).strip() if m else None
+
+
+def _stream_text(text: str, delay: float = 0.018):
+    """
+    Generator that yields words one by one for st.write_stream().
+    Simulates streaming since Groq returns the full response at once.
+    """
+    for word in re.split(r"(\s+)", text):
+        if word:
+            yield word
+            time.sleep(delay)
 
 
 # ============================================================================
@@ -205,7 +249,13 @@ The complete answer, with numbers taken directly from code output above.
 - Never answer a numerical question without computing it in code first
 - Never write prose explanations instead of code
 - Never skip <CODE> on the first response to a new question
-- Never invent or estimate numbers — run code to get them
+- NEVER invent, estimate, or assume financial figures — if the data is not
+  in the retrieved context above, say "Data not found in filings" and stop
+- NEVER hardcode placeholder values like [21.91, 22.95] — only use numbers
+  explicitly present in the [Retrieved Filing Context] section above
+- If the retrieved context does not contain the specific numbers needed,
+  respond with <FINAL_ANSWER>I could not find that data in the ingested
+  filings. Please ingest the relevant ticker and year first.</FINAL_ANSWER>
 
 ## Execution environment
 - numpy available as `np`, pandas as `pd`
@@ -215,16 +265,55 @@ The complete answer, with numbers taken directly from code output above.
 """
 
 
-def _build_system_prompt(rag_chunks: list[dict]) -> str:
-    if not rag_chunks:
-        return _BASE_SYSTEM_PROMPT
-    context_lines = ["## Retrieved SEC Filing Data\nUse this data in your code:\n"]
-    for i, c in enumerate(rag_chunks, 1):
-        context_lines.append(
-            f"[{i}] {c['ticker']} {c['year']} {c['section']} — {c['title']}\n"
-            f"{c['text'][:600]}\n"
+def _build_system_prompt(rag_chunks: list[dict], query: str = "") -> str:
+    """
+    Build prompt with 3 layers:
+    1. Correct formulas for the query topic
+    2. RAG data formatted as Python-ready variable assignments
+    3. Base system prompt
+    """
+    sections: list[str] = []
+
+    # Layer 1: Formula reference
+    formula_block = _get_formulas(query)
+    if formula_block.strip():
+        sections.append(
+            "## CORRECT FORMULAS — USE THESE EXACTLY\n"
+            "Do not invent alternative formulas. Copy the code templates below.\n\n"
+            + formula_block
         )
-    return "\n".join(context_lines) + "\n---\n\n" + _BASE_SYSTEM_PROMPT
+
+    # Layer 2: RAG data as Python-ready text
+    if rag_chunks:
+        lines = [
+            "## REAL DATA FROM SEC 10-K FILINGS",
+            "These numbers are from actual filings. Use them in your code.",
+            "When you see a number in the text below, assign it to a variable.",
+            "Example: text says 'R&D expense: $29.9 billion' → write: rd = 29.9e9",
+            "",
+        ]
+        # Group by ticker+year
+        seen: dict[str, list] = {}
+        for c in rag_chunks:
+            k = f"{c['ticker']} {c['year']}"
+            seen.setdefault(k, []).append(c)
+
+        for filing, chunks in seen.items():
+            lines.append(f"### {filing} 10-K")
+            for c in chunks:
+                lines.append(f"**{c['section']} — {c['title']}**")
+                lines.append(c["text"][:800])
+                lines.append("")
+
+        lines += [
+            "IMPORTANT: Extract specific dollar figures from the text above.",
+            "NEVER hardcode values not present in this data.",
+        ]
+        sections.append("\n".join(lines))
+
+    sections.append(_BASE_SYSTEM_PROMPT)
+    separator = "\n\n" + "=" * 60 + "\n\n"
+    return separator.join(sections)
 
 
 # ============================================================================
@@ -239,8 +328,12 @@ def _add_message(role: str, content: str, msg_type: str = "text"):
     )
 
 
-def _render_message(msg: dict):
-    """Render a single message dict to the chat area."""
+def _render_message(msg: dict, stream: bool = False):
+    """
+    Render a single message dict.
+    stream=True: thought and answer text animate word-by-word via st.write_stream.
+    stream=False: render instantly (used when replaying history).
+    """
     role = msg["role"]
     content = msg["content"]
     mtype = msg.get("type", "text")
@@ -251,10 +344,20 @@ def _render_message(msg: dict):
         )
 
     elif mtype == "thought":
-        st.markdown(
-            f'<div class="thought-block">🧠 <b>Thought</b><br>{content}</div>',
-            unsafe_allow_html=True,
-        )
+        if stream:
+            placeholder = st.empty()
+            accumulated = ""
+            for word in _stream_text(content, delay=0.012):
+                accumulated += word
+                placeholder.markdown(
+                    f'<div class="thought-block">🧠 <b>Thought</b><br>{accumulated}</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                f'<div class="thought-block">🧠 <b>Thought</b><br>{content}</div>',
+                unsafe_allow_html=True,
+            )
 
     elif mtype == "code":
         with st.expander("💻 Code", expanded=True):
@@ -279,10 +382,22 @@ def _render_message(msg: dict):
         )
 
     elif mtype == "answer":
-        st.markdown(
-            f'<div class="answer-block">✅ <b>Answer</b><br><br>{content}</div>',
-            unsafe_allow_html=True,
-        )
+        if stream:
+            # Stream word-by-word into a placeholder, then swap for the
+            # final styled block — avoids the </div> leaking outside the div.
+            placeholder = st.empty()
+            accumulated = ""
+            for word in _stream_text(content, delay=0.022):
+                accumulated += word
+                placeholder.markdown(
+                    f'<div class="answer-block">✅ <b>Answer</b><br><br>{accumulated}</div>',
+                    unsafe_allow_html=True,
+                )
+        else:
+            st.markdown(
+                f'<div class="answer-block">✅ <b>Answer</b><br><br>{content}</div>',
+                unsafe_allow_html=True,
+            )
 
     elif mtype == "error":
         st.error(content)
@@ -295,7 +410,7 @@ def _render_message(msg: dict):
 
 def _render_all_messages():
     for msg in st.session_state.messages:
-        _render_message(msg)
+        _render_message(msg, stream=False)
 
 
 # ============================================================================
@@ -527,6 +642,14 @@ def _render_sidebar(rag):
                 '<span class="badge-gray">○ RAG unavailable</span>',
                 unsafe_allow_html=True,
             )
+            err = st.session_state.get("_rag_error")
+            diag = st.session_state.get("_rag_diag", {})
+            if diag:
+                with st.expander("🔍 Debug info", expanded=True):
+                    st.code(
+                        "\n".join(f"{k}: {v}" for k, v in diag.items()),
+                        language=None,
+                    )
 
         st.divider()
 
@@ -663,7 +786,7 @@ def main():
                 # Clear status line once real content arrives
                 status_placeholder.empty()
 
-                # Persist to message log and render
+                # Persist to message log and render live (stream=True)
                 if etype in (
                     "thought",
                     "code",
@@ -675,7 +798,8 @@ def main():
                 ):
                     _add_message("agent", content, etype)
                     _render_message(
-                        {"role": "agent", "content": content, "type": etype}
+                        {"role": "agent", "content": content, "type": etype},
+                        stream=True,
                     )
 
             status_placeholder.empty()
