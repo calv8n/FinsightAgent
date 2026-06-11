@@ -345,26 +345,3 @@ Run `python eval/harness.py --out eval/results.json` to generate your own number
 | Multi-hop pandas    | D01–D05 | Income statements, LBO, sensitivity tables          |
 
 **Reported metrics:** average judge score (0–3), code execution success rate, average iterations per question, latency p50 and p95.
-
----
-
-## Interview Talking Points
-
-**Why CodeAct instead of fixed tool schemas?**
-Tool schemas force you to pre-define every action the agent can take. CodeAct lets the agent write arbitrary Python — so it can build DataFrames, run regressions, simulate Monte Carlo paths, compute IRR — without me having to anticipate any of it in advance. The agent's action space is the full Python standard library plus numpy and pandas.
-
-**Why raw HTTP instead of an LLM SDK?**
-Full visibility into every request and response. The message history structure, retry logic, and rate-limit handling are explicit and debuggable. Nothing is hidden behind an abstraction, which matters both for correctness and for being able to explain exactly what's happening in an interview.
-
-**Why Docker instead of restricted `exec()`?**
-In-process `exec()` with a restricted `__builtins__` dict can be escaped via `ctypes`, `gc` object traversal, or `__class__.__mro__` attribute chains. Docker provides OS-level isolation — separate network namespace, separate PID namespace, kernel-enforced memory limits. Four independent security layers need to fail simultaneously for anything unsafe to execute.
-
-**Why BM25 alongside dense vectors?**
-Dense retrieval is strong at semantic similarity but misses exact keyword matches — ticker symbols, Item numbers, specific financial line items like "operating cash flow". BM25 catches those. RRF fusion consistently outperforms either retriever alone on financial text.
-
-**Why a cross-encoder reranker on top of RRF?**
-Cosine similarity scores each passage independently of the query. A cross-encoder sees the query and passage concatenated and scores them jointly — far more accurate at distinguishing topically related passages from passages that actually answer the question. Applied only to the top 10 RRF candidates so latency stays manageable.
-
-**How does the conversation history rolling window work?**
-The original user query is pinned at index 0. The first assistant response is pinned at index 1. When total messages exceed the window limit, the oldest middle pairs are dropped. The LLM always has the original question and the most recent context, regardless of session length.
-
