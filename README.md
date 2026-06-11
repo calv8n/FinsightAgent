@@ -368,20 +368,3 @@ Cosine similarity scores each passage independently of the query. A cross-encode
 **How does the conversation history rolling window work?**
 The original user query is pinned at index 0. The first assistant response is pinned at index 1. When total messages exceed the window limit, the oldest middle pairs are dropped. The LLM always has the original question and the most recent context, regardless of session length.
 
----
-
-## Roadmap
-
-- [ ] Qdrant Cloud (replace local Docker)
-- [ ] yfinance integration for real-time price and fundamentals data
-- [ ] `get_financials()` and `get_filing()` functions exposed to sandbox
-- [ ] Streaming token output from LLM
-- [ ] PostgreSQL session storage
-- [ ] RAGAS evaluation metrics (faithfulness, answer relevance, context precision)
-- [ ] Fine-tuned system prompt based on eval results
-
----
-
-## License
-
-MIT
