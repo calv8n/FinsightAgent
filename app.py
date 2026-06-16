@@ -177,7 +177,8 @@ def _get_formulas(query: str) -> str:
 
 
 def _extract(tag, text):
-    m = re.search(rf"<{tag}>(.*?)</{tag}>", text, re.DOTALL | re.IGNORECASE)
+    # More flexible regex to handle tags with extra spaces: <CODE >, < CODE>, etc.
+    m = re.search(rf"<\s*{tag}\s*>(.*?)<\s*/\s*{tag}\s*>", text, re.DOTALL | re.IGNORECASE)
     return m.group(1).strip() if m else None
 
 

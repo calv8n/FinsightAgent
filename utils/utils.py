@@ -13,7 +13,8 @@ def tag_content(text, tags):
     """
     res = {}
     for tag in tags:
-        pattern = rf"<{tag}>(.*?)</{tag}>"
+        # More flexible regex to handle tags with extra spaces: <CODE >, < CODE>, etc.
+        pattern = rf"<\s*{tag}\s*>(.*?)<\s*/\s*{tag}\s*>"
         match = re.search(pattern, text, re.DOTALL)
         if match:
             res[tag] = match.group(1).strip()
